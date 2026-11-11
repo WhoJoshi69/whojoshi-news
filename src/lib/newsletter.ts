@@ -32,6 +32,14 @@ export type Story = {
 
 export type Issue = IssueMeta & { stories: Story[] }
 
+/**
+ * Visible text only: "Superhuman" → a name placeholder the browser fills with the reader's name.
+ * "{{name}}" for normal case, "{{NAME}}" for ALL-CAPS. Never applied to URLs.
+ */
+export function rebrand(s: string) {
+  return s.replace(/(?<![A-Za-z0-9_])superhuman(?![A-Za-z0-9_])/gi, (m) => (m === m.toUpperCase() ? "{{NAME}}" : "{{name}}"))
+}
+
 /* ---------------- tiny TTL cache + fetch ---------------- */
 
 const cache = new Map<string, { at: number; value: unknown }>()
@@ -89,8 +97,8 @@ export function listIssues(source: SourceId, page = 1): Promise<IssueMeta[]> {
       out.push({
         source,
         slug,
-        title: unescape(title),
-        subtitle: unescape(subtitle),
+        title: rebrand(unescape(title)),
+        subtitle: rebrand(unescape(subtitle)),
         date: override || scheduled,
         image: image ? unescape(image) : null,
         url: `${base}/p/${slug}`,
@@ -122,7 +130,7 @@ function clean($: cheerio.CheerioAPI, nodes: AnyNode[]): string {
   let out = ""
   for (const node of nodes) {
     if (node.type === "text") {
-      out += esc((node as unknown as { data: string }).data)
+      out += esc(rebrand((node as unknown as { data: string }).data))
       continue
     }
     if (node.type !== "tag") continue
@@ -187,8 +195,8 @@ export function getIssue(source: SourceId, slug: string): Promise<Issue> {
     const $ = cheerio.load(html)
 
     const meta = (p: string) => $(`meta[property="${p}"]`).attr("content") || ""
-    const title = meta("og:title") || $("title").text()
-    const subtitle = meta("og:description")
+    const title = rebrand(meta("og:title") || $("title").text())
+    const subtitle = rebrand(meta("og:description"))
     const date = meta("article:published_time")
     const ogImage = meta("og:image") || null
 
@@ -211,11 +219,11 @@ export function getIssue(source: SourceId, slug: string): Promise<Issue> {
       const h5 = $b.find("h5").first()
       if (h5.length) {
         stories.push(cur)
-        const kicker = text(h5.text())
+        const kicker = rebrand(text(h5.text()))
         const h2 = $b.find("h2").first()
         cur = {
           kicker,
-          title: h2.length ? text(h2.text()) : "",
+          title: h2.length ? rebrand(text(h2.text())) : "",
           parts: [...orphanImages],
           pending: [],
         }

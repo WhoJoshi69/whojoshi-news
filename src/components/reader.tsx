@@ -3,9 +3,13 @@
 
 import * as React from "react"
 import { AnimatePresence, motion, MotionConfig, useMotionValue, useSpring, type PanInfo } from "motion/react"
-import { ArrowUpRight, ChevronLeft, ChevronRight, Keyboard, Moon, Sun } from "lucide-react"
+import { ArrowRight, ArrowUpRight, CalendarDays, ChevronLeft, ChevronRight, Keyboard, Moon, PartyPopper, Sun, UserRound } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Calendar } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { useParams, useRouter } from "next/navigation"
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import Aurora from "@/components/aurora"
@@ -49,6 +53,33 @@ const fmtDate = (d: string) => {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: days > 300 ? "numeric" : undefined })
 }
 
+/* ---------------- days (local time, "YYYY-MM-DD") ---------------- */
+
+const pad = (n: number) => String(n).padStart(2, "0")
+const dayKey = (d: string | Date) => {
+  const x = new Date(d)
+  return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`
+}
+const parseDay = (k: string) => new Date(`${k}T00:00:00`)
+const shiftDay = (k: string, n: number) => {
+  const d = parseDay(k)
+  d.setDate(d.getDate() + n)
+  return dayKey(d)
+}
+/** "Today", "Yesterday", or "Mon, Nov 10" */
+const fmtDay = (k: string) => {
+  const today = dayKey(new Date())
+  if (k === today) return "Today"
+  if (k === shiftDay(today, -1)) return "Yesterday"
+  const d = parseDay(k)
+  return d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+  })
+}
+
 const store = {
   get(k: string) {
     try {
@@ -64,6 +95,19 @@ const store = {
   },
 }
 
+/* ---------------- reader's name ---------------- */
+
+const DEFAULT_NAME = "friend"
+
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+
+/** Fill the server's {{name}} / {{NAME}} placeholders. Pass html=true for HTML strings. */
+function fillName(s: string, name: string, html = false) {
+  const n = html ? escapeHtml(name) : name
+  return s.replace(/\{\{name\}\}/g, n).replace(/\{\{NAME\}\}/g, n.toUpperCase())
+}
+
 /* ---------------- reader ---------------- */
 
 export function Reader() {
@@ -73,10 +117,19 @@ export function Reader() {
   })
   const [loaded, setLoaded] = React.useState<Record<string, Loaded>>({})
   const [filter, setFilter] = React.useState<Filter>("all")
-  const [cur, setCur] = React.useState<{ key: string | null; story: number }>({ key: null, story: 0 })
+  // `end` = showing the "all caught up" card after the day's last story
+  const [cur, setCur] = React.useState<{ key: string | null; story: number; end?: boolean }>({ key: null, story: 0 })
+  const [calOpen, setCalOpen] = React.useState(false)
+  const params = useParams<{ date?: string }>()
+  const router = useRouter()
+  const routeDay = params?.date ?? null
+  const inflight = React.useRef(new Set<SourceId>())
   const [dir, setDir] = React.useState(1)
   const [help, setHelp] = React.useState(false)
   const [dark, setDark] = React.useState(false)
+  const [name, setName] = React.useState("")
+  const [askName, setAskName] = React.useState(false)
+  const displayName = name || DEFAULT_NAME
   const scrollRef = React.useRef<HTMLDivElement>(null)
   const listsRef = React.useRef(lists)
   listsRef.current = lists
@@ -86,6 +139,9 @@ export function Reader() {
   /* ---- boot ---- */
   React.useEffect(() => {
     setDark(document.documentElement.classList.contains("dark"))
+    const saved = store.get("name")
+    if (saved !== null) setName(saved)
+    else setAskName(true) // first visit: ask for a name
     const f = store.get("filter") as Filter | null
     if (f && FILTERS.some((x) => x.id === f)) setFilter(f)
   }, [])
@@ -93,11 +149,12 @@ export function Reader() {
   /* ---- data loading ---- */
   const loadPage = React.useCallback(async (source: SourceId) => {
     const st = listsRef.current[source]
-    if (st.loading || st.done) return
+    if (st.done || inflight.current.has(source)) return
+    inflight.current.add(source) // sync guard: effects can fire twice before state updates land
     const page = st.page + 1
     setLists((l) => ({ ...l, [source]: { ...l[source], loading: true } }))
     try {
-      const res = await fetch(`/api/issues?source=${source}&page=${page}`)
+      const res = await fetch(`/api/issues?source=${source}&page=${page}`, { cache: "no-store" })
       const { issues } = (await res.json()) as { issues: IssueMeta[] }
       setLists((l) => {
         const seen = new Set(l[source].issues.map((i) => i.slug))
@@ -109,6 +166,8 @@ export function Reader() {
       })
     } catch {
       setLists((l) => ({ ...l, [source]: { ...l[source], loading: false } }))
+    } finally {
+      inflight.current.delete(source)
     }
   }, [])
 
@@ -118,7 +177,7 @@ export function Reader() {
     if (s && s !== "error") return
     setLoaded((m) => ({ ...m, [k]: "loading" }))
     try {
-      const res = await fetch(`/api/issue?source=${meta.source}&slug=${meta.slug}`)
+      const res = await fetch(`/api/issue?source=${meta.source}&slug=${meta.slug}`, { cache: "no-store" })
       if (!res.ok) throw new Error()
       const issue = (await res.json()) as Issue
       setLoaded((m) => ({ ...m, [k]: issue }))
@@ -129,16 +188,43 @@ export function Reader() {
     }
   }, [])
 
-  React.useEffect(() => {
-    loadPage("superhuman")
-    loadPage("code")
-  }, [loadPage])
+  /* ---- derived feed: every loaded issue, then just the selected day ---- */
+  const sources = React.useMemo<SourceId[]>(() => (filter === "all" ? ["superhuman", "code"] : [filter]), [filter])
 
-  /* ---- derived feed ---- */
-  const feed = React.useMemo(() => {
-    const src: SourceId[] = filter === "all" ? ["superhuman", "code"] : [filter]
-    return src.flatMap((s) => lists[s].issues).sort((a, b) => +new Date(b.date) - +new Date(a.date))
-  }, [lists, filter])
+  const allFeed = React.useMemo(
+    () => sources.flatMap((s) => lists[s].issues).sort((a, b) => +new Date(b.date) - +new Date(a.date)),
+    [lists, sources],
+  )
+  const latestDay = allFeed[0] ? dayKey(allFeed[0].date) : null
+  const day = routeDay ?? latestDay // "/" → latest day with issues
+
+  // a day is fully loaded once each source's archive reaches past it (or runs out)
+  const dayCovered =
+    !!day &&
+    sources.every((s) => {
+      const st = lists[s]
+      const last = st.issues[st.issues.length - 1]
+      return st.done || (!!last && dayKey(last.date) < day)
+    })
+
+  // page through the archive until the selected day is covered
+  React.useEffect(() => {
+    sources.forEach((s) => {
+      const st = lists[s]
+      if (st.done) return
+      const last = st.issues[st.issues.length - 1]
+      if (!last || (day && dayKey(last.date) >= day)) loadPage(s)
+    })
+  }, [day, lists, sources, loadPage])
+
+  const feed = React.useMemo(() => (day ? allFeed.filter((i) => dayKey(i.date) === day) : []), [allFeed, day])
+
+  // neighbouring days that have issues (older one falls back to "the day before" while still loading)
+  const allDone = sources.every((s) => lists[s].done)
+  const olderDay = day ? (allFeed.find((i) => dayKey(i.date) < day) ? dayKey(allFeed.find((i) => dayKey(i.date) < day)!.date) : allDone ? null : shiftDay(day, -1)) : null
+  const newerDay = day ? ([...allFeed].reverse().find((i) => dayKey(i.date) > day)?.date ?? null) : null
+  const newerDayKey = newerDay ? dayKey(newerDay) : null
+  const daysWithIssues = React.useMemo(() => [...new Set(allFeed.map((i) => dayKey(i.date)))].map(parseDay), [allFeed])
 
   // fall back to the newest issue whenever the current one isn't in the feed (boot, filter change)
   const foundIdx = cur.key ? feed.findIndex((i) => keyOf(i) === cur.key) : -1
@@ -156,10 +242,7 @@ export function Reader() {
     loadIssue(feed[issueIdx])
     if (feed[issueIdx + 1]) loadIssue(feed[issueIdx + 1])
     if (feed[issueIdx - 1]) loadIssue(feed[issueIdx - 1])
-    if (issueIdx >= feed.length - 3) {
-      ;(filter === "all" ? (["superhuman", "code"] as SourceId[]) : [filter]).forEach((s) => loadPage(s))
-    }
-  }, [issueIdx, feed, filter, loadIssue, loadPage])
+  }, [issueIdx, feed, loadIssue])
 
   // preload next story's image
   React.useEffect(() => {
@@ -167,22 +250,38 @@ export function Reader() {
     if (nxt?.image) new Image().src = nxt.image
   }, [issue, storyIdx])
 
+  const isEnd = !!cur.end && !!issue && issueIdx === feed.length - 1
+
   /* ---- navigation ---- */
+  const goDay = React.useCallback(
+    (k: string | null) => {
+      if (!k || k === day) return
+      setDir(day && k > day ? -1 : 1) // older days slide in like "next"
+      setCur({ key: null, story: 0 })
+      setCalOpen(false)
+      router.push(k === latestDay ? "/" : `/${k}`)
+    },
+    [day, latestDay, router],
+  )
+
   const next = React.useCallback(() => {
+    if (isEnd) return goDay(olderDay) // "yes, show me the previous day"
     if (!meta) return
     setDir(1)
     if (issue && storyIdx < issue.stories.length - 1) return setCur({ key: curKey, story: storyIdx + 1 })
     const n = feed[issueIdx + 1]
-    if (n) setCur({ key: keyOf(n), story: 0 })
-  }, [meta, issue, storyIdx, feed, issueIdx, curKey])
+    if (n) return setCur({ key: keyOf(n), story: 0 })
+    if (issue) setCur({ key: curKey, story: storyIdx, end: true }) // finished the day
+  }, [isEnd, goDay, olderDay, meta, issue, storyIdx, feed, issueIdx, curKey])
 
   const prev = React.useCallback(() => {
     if (!meta) return
     setDir(-1)
+    if (isEnd) return setCur({ key: curKey, story: storyIdx })
     if (storyIdx > 0) return setCur({ key: curKey, story: storyIdx - 1 })
     const p = feed[issueIdx - 1]
     if (p) setCur({ key: keyOf(p), story: -1 })
-  }, [meta, storyIdx, feed, issueIdx, curKey])
+  }, [meta, isEnd, storyIdx, feed, issueIdx, curKey])
 
   const jumpIssue = React.useCallback(
     (d: 1 | -1) => {
@@ -235,6 +334,7 @@ export function Reader() {
       if (e.metaKey || e.ctrlKey || e.altKey) return
       const t = e.target as HTMLElement
       if (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName)) return
+      if (askName) return // name prompt is open
       const el = scrollRef.current
       const atBottom = !el || el.scrollTop + el.clientHeight >= el.scrollHeight - 4
       const atTop = !el || el.scrollTop <= 2
@@ -283,9 +383,21 @@ export function Reader() {
             setCur({ key: keyOf(feed[0]), story: 0 })
           }
           break
-        case "o":
         case "Enter":
+          if (isEnd) goDay(olderDay)
+          else if (meta) window.open(meta.url, "_blank", "noopener")
+          break
+        case "o":
           if (meta) window.open(meta.url, "_blank", "noopener")
+          break
+        case ",":
+          goDay(olderDay)
+          break
+        case ".":
+          goDay(newerDayKey)
+          break
+        case "c":
+          setCalOpen((o) => !o)
           break
         case "0":
         case "1":
@@ -294,6 +406,9 @@ export function Reader() {
           break
         case "t":
           toggleTheme()
+          break
+        case "u":
+          setAskName(true)
           break
         case "?":
           setHelp((h) => !h)
@@ -308,7 +423,14 @@ export function Reader() {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [next, prev, jumpIssue, changeFilter, toggleTheme, feed, meta, curKey])
+  }, [next, prev, jumpIssue, changeFilter, toggleTheme, feed, meta, curKey, askName, isEnd, goDay, olderDay, newerDayKey])
+
+  const saveName = (n: string) => {
+    const clean = n.trim().replace(/\s+/g, " ").slice(0, 40)
+    setName(clean)
+    store.set("name", clean)
+    setAskName(false)
+  }
 
   /* ---- swipe ---- */
   const onDragEnd = (_: unknown, info: PanInfo) => {
@@ -318,9 +440,10 @@ export function Reader() {
   }
 
   const total = issue?.stories.length ?? 0
-  const animKey = `${curKey}:${issue ? storyIdx : "loading"}`
-  const hasNext = !!(issue && storyIdx < total - 1) || !!feed[issueIdx + 1]
-  const hasPrev = storyIdx > 0 || issueIdx > 0
+  const emptyDay = dayCovered && feed.length === 0
+  const animKey = `${day}:${curKey}:${isEnd ? "end" : issue ? storyIdx : emptyDay ? "empty" : "loading"}`
+  const hasNext = isEnd ? !!olderDay : !!issue || !!feed[issueIdx + 1]
+  const hasPrev = isEnd || storyIdx > 0 || issueIdx > 0
 
   return (
     <MotionConfig reducedMotion="user">
@@ -369,8 +492,32 @@ export function Reader() {
           </nav>
 
           <div className="flex items-center gap-1">
+            <Popover open={calOpen} onOpenChange={setCalOpen}>
+              <PopoverTrigger
+                render={
+                  <Button variant="ghost" className="h-8 gap-1.5 rounded-full px-2.5" aria-label="Pick a date" />
+                }
+              >
+                <CalendarDays />
+                <span className="hidden text-xs sm:inline">{day ? fmtDay(day) : "…"}</span>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-auto p-0">
+                <Calendar
+                  mode="single"
+                  selected={day ? parseDay(day) : undefined}
+                  defaultMonth={day ? parseDay(day) : undefined}
+                  onSelect={(d) => d && goDay(dayKey(d))}
+                  disabled={{ after: new Date() }}
+                  modifiers={{ hasIssues: daysWithIssues }}
+                  modifiersClassNames={{ hasIssues: "has-issues" }}
+                />
+              </PopoverContent>
+            </Popover>
             <Button variant="ghost" size="icon" onClick={() => setHelp(true)} aria-label="Keyboard shortcuts" className="hidden sm:inline-flex">
               <Keyboard />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={() => setAskName(true)} aria-label="Change your name" title={`Reading as ${displayName}`}>
+              <UserRound />
             </Button>
             <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme">
               {dark ? <Sun /> : <Moon />}
@@ -432,12 +579,22 @@ export function Reader() {
                   onScroll={(e) => e.currentTarget === scrollRef.current && onScroll()}
                   className="thin-scrollbar h-full overflow-y-auto overscroll-contain"
                 >
-                  {meta && story && issue ? (
-                    <StoryView meta={meta} story={story} index={storyIdx} total={total} />
+                  {isEnd && day ? (
+                    <EndOfDay
+                      day={day}
+                      olderDay={olderDay}
+                      name={displayName}
+                      onYes={() => goDay(olderDay)}
+                      onPick={() => setCalOpen(true)}
+                    />
+                  ) : meta && story && issue ? (
+                    <StoryView meta={meta} story={story} index={storyIdx} total={total} name={displayName} />
+                  ) : emptyDay && day ? (
+                    <EmptyDay day={day} olderDay={olderDay} onOlder={() => goDay(olderDay)} onPick={() => setCalOpen(true)} />
                   ) : issueState === "error" ? (
                     <ErrorView url={meta?.url} onRetry={() => meta && loadIssue(meta)} />
                   ) : (
-                    <LoadingView meta={meta} />
+                    <LoadingView meta={meta} name={displayName} />
                   )}
                 </div>
               </motion.article>
@@ -461,13 +618,19 @@ export function Reader() {
                 transition={{ duration: 0.18 }}
                 className="truncate text-xs text-muted-foreground"
               >
-                {meta ? (
+                {isEnd && day ? (
+                  <span>All caught up · {fmtDay(day)}</span>
+                ) : emptyDay && day ? (
+                  <span>No issues · {fmtDay(day)}</span>
+                ) : meta ? (
                   <>
+                    <span>{day ? fmtDay(day) : ""}</span>
+                    <span className="mx-2 opacity-40">·</span>
                     <span className="tabular-nums">
                       {total ? `${storyIdx + 1} / ${total}` : "…"}
                     </span>
                     <span className="mx-2 opacity-40">·</span>
-                    <span>{meta.title}</span>
+                    <span>{fillName(meta.title, displayName)}</span>
                   </>
                 ) : (
                   "Loading issues…"
@@ -488,6 +651,16 @@ export function Reader() {
         </footer>
 
         <AnimatePresence>{help && <HelpOverlay onClose={() => setHelp(false)} />}</AnimatePresence>
+        <AnimatePresence>
+          {askName && (
+            <NamePrompt
+              initial={name}
+              canClose={store.get("name") !== null}
+              onSave={saveName}
+              onClose={() => setAskName(false)}
+            />
+          )}
+        </AnimatePresence>
       </div>
     </MotionConfig>
   )
@@ -495,7 +668,26 @@ export function Reader() {
 
 /* ---------------- pieces ---------------- */
 
-function StoryView({ meta, story, index, total }: { meta: IssueMeta; story: Story; index: number; total: number }) {
+function StoryView({
+  meta,
+  story: raw,
+  index,
+  total,
+  name,
+}: {
+  meta: IssueMeta
+  story: Story
+  index: number
+  total: number
+  name: string
+}) {
+  const story = {
+    ...raw,
+    title: fillName(raw.title, name),
+    kicker: raw.kicker && fillName(raw.kicker, name),
+    html: fillName(raw.html, name, true),
+  }
+  meta = { ...meta, subtitle: fillName(meta.subtitle, name) }
   const isIntro = index === 0
   return (
     <div className="mx-auto max-w-[44rem] px-5 pt-6 pb-16 sm:px-10 sm:pt-9">
@@ -552,7 +744,7 @@ function StoryView({ meta, story, index, total }: { meta: IssueMeta; story: Stor
   )
 }
 
-function LoadingView({ meta }: { meta: IssueMeta | null }) {
+function LoadingView({ meta, name }: { meta: IssueMeta | null; name: string }) {
   return (
     <div className="mx-auto max-w-[44rem] px-5 pt-6 sm:px-10 sm:pt-9">
       <div className="mb-5 flex items-center gap-2">
@@ -561,7 +753,7 @@ function LoadingView({ meta }: { meta: IssueMeta | null }) {
       </div>
       {meta ? (
         <h1 className="font-serif text-[2.6rem] leading-[1.05] tracking-tight text-balance text-foreground/40 sm:text-6xl">
-          {meta.title}
+          {fillName(meta.title, name)}
         </h1>
       ) : (
         <div className="space-y-3">
@@ -610,6 +802,10 @@ const SHORTCUTS: [string[], string][] = [
   [["O", "↵"], "Open original"],
   [["0", "1", "2"], "All / WhoJoshi / The Code"],
   [["T"], "Toggle theme"],
+  [["U"], "Change your name"],
+  [["C"], "Pick a date"],
+  [[","], "Previous day"],
+  [["."], "Next day"],
   [["?"], "Toggle this panel"],
 ]
 
@@ -645,5 +841,173 @@ function HelpOverlay({ onClose }: { onClose: () => void }) {
         </ul>
       </motion.div>
     </motion.div>
+  )
+}
+
+function NamePrompt({
+  initial,
+  canClose,
+  onSave,
+  onClose,
+}: {
+  initial: string
+  canClose: boolean
+  onSave: (name: string) => void
+  onClose: () => void
+}) {
+  const [value, setValue] = React.useState(initial)
+  const inputRef = React.useRef<HTMLInputElement>(null)
+
+  // focus once mounted (the intro animation may still be covering the page — typing works anyway)
+  React.useEffect(() => {
+    const id = setTimeout(() => inputRef.current?.focus(), 50)
+    return () => clearTimeout(id)
+  }, [])
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-md"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={() => canClose && onClose()}
+    >
+      <motion.form
+        initial={{ opacity: 0, y: 24, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 12, scale: 0.98 }}
+        transition={{ type: "spring", stiffness: 380, damping: 32 }}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && canClose) onClose()
+        }}
+        onSubmit={(e) => {
+          e.preventDefault()
+          onSave(value)
+        }}
+        className="w-full max-w-sm rounded-3xl border bg-card p-7 shadow-2xl"
+      >
+        <h2 className="font-serif text-4xl leading-none tracking-wide uppercase">What’s your name?</h2>
+        <p className="mt-3 text-sm text-muted-foreground">
+          Every issue will greet you by name. You can change it any time with <Kbd>U</Kbd>.
+        </p>
+        <Input
+          ref={inputRef}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Your name"
+          maxLength={40}
+          autoComplete="given-name"
+          className="mt-6 h-11 rounded-xl px-4 text-base"
+        />
+        <div className="mt-4 flex items-center justify-between gap-2">
+          <Button type="button" variant="ghost" onClick={() => onSave("")} className="text-muted-foreground">
+            Skip
+          </Button>
+          <Button type="submit" size="lg" className="rounded-xl px-4" disabled={!value.trim()}>
+            Continue <ArrowRight />
+          </Button>
+        </div>
+      </motion.form>
+    </motion.div>
+  )
+}
+
+/** "yesterday's" / "Mon, Nov 9's" — for the end-of-day question */
+const dayPhrase = (k: string) => {
+  const f = fmtDay(k)
+  return f === "Today" || f === "Yesterday" ? f.toLowerCase() : f
+}
+
+function EndOfDay({
+  day,
+  olderDay,
+  name,
+  onYes,
+  onPick,
+}: {
+  day: string
+  olderDay: string | null
+  name: string
+  onYes: () => void
+  onPick: () => void
+}) {
+  return (
+    <div className="flex min-h-full flex-col items-center justify-center px-6 py-12 text-center">
+      <motion.div
+        initial={{ scale: 0.6, rotate: -12, opacity: 0 }}
+        animate={{ scale: 1, rotate: 0, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 260, damping: 16, delay: 0.05 }}
+        className="mb-6 flex size-16 items-center justify-center rounded-2xl border bg-foreground/5"
+      >
+        <PartyPopper className="size-7" />
+      </motion.div>
+      <motion.h2
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1 }}
+        className="font-serif text-4xl leading-none tracking-wide uppercase sm:text-6xl"
+      >
+        You’re all caught up
+      </motion.h2>
+      <motion.p
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.16 }}
+        className="mt-4 max-w-sm text-muted-foreground text-pretty"
+      >
+        That’s every story from {dayPhrase(day)}, {name}.
+        {olderDay ? ` Want to check out ${dayPhrase(olderDay)}’s stories?` : " That’s the end of the archive."}
+      </motion.p>
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.22 }}
+        className="mt-8 flex flex-wrap items-center justify-center gap-2"
+      >
+        {olderDay && (
+          <Button size="lg" className="h-10 rounded-full px-5" onClick={onYes}>
+            Yes, show {dayPhrase(olderDay)} <ArrowRight />
+          </Button>
+        )}
+        <Button size="lg" variant="outline" className="h-10 rounded-full px-5" onClick={onPick}>
+          <CalendarDays /> Pick a date
+        </Button>
+      </motion.div>
+      {olderDay && (
+        <p className="mt-5 flex items-center gap-1.5 text-xs text-muted-foreground/60">
+          Press <Kbd>J</Kbd> or <Kbd>↵</Kbd> to continue
+        </p>
+      )}
+    </div>
+  )
+}
+
+function EmptyDay({
+  day,
+  olderDay,
+  onOlder,
+  onPick,
+}: {
+  day: string
+  olderDay: string | null
+  onOlder: () => void
+  onPick: () => void
+}) {
+  return (
+    <div className="flex min-h-full flex-col items-center justify-center px-6 py-12 text-center">
+      <h2 className="font-serif text-4xl leading-none tracking-wide uppercase sm:text-5xl">No issues on {fmtDay(day)}</h2>
+      <p className="mt-4 max-w-sm text-muted-foreground">Nothing was published that day. Try another one.</p>
+      <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+        {olderDay && (
+          <Button size="lg" className="h-10 rounded-full px-5" onClick={onOlder}>
+            Go to {fmtDay(olderDay)} <ArrowRight />
+          </Button>
+        )}
+        <Button size="lg" variant="outline" className="h-10 rounded-full px-5" onClick={onPick}>
+          <CalendarDays /> Pick a date
+        </Button>
+      </div>
+    </div>
   )
 }

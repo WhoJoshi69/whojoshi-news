@@ -9,7 +9,7 @@ const anton = Anton({ variable: "--font-anton-face", subsets: ["latin"], weight:
 
 export const metadata: Metadata = {
   title: "Brief — AI news, one card at a time",
-  description: "A fast, keyboard-first reader for Superhuman AI and The Code.",
+  description: "A fast, keyboard-first reader for WhoJoshi and The Code.",
 }
 
 export const viewport: Viewport = {

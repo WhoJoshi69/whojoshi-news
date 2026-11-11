@@ -7,7 +7,7 @@ export async function GET(req: Request) {
   if (!isSource(source)) return Response.json({ error: "unknown source" }, { status: 400 })
   try {
     const issues = await listIssues(source, page)
-    return Response.json({ issues }, { headers: { "cache-control": "public, max-age=300" } })
+    return Response.json({ issues }, { headers: { "cache-control": "no-store" } })
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 502 })
   }
