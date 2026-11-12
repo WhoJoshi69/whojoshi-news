@@ -493,7 +493,7 @@ export function Reader() {
 
         {/* header */}
         {/* phones: two rows (logo + actions, then a full-width filter). sm+: one row. */}
-        <header className="relative z-10 grid w-full max-w-3xl grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2.5 px-3.5 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2.5 sm:flex sm:justify-between sm:px-6 sm:pt-4 sm:pb-3">
+        <header className="relative z-10 grid w-full max-w-3xl lg:max-w-[60rem] grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2.5 px-3.5 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2.5 sm:flex sm:justify-between sm:px-6 sm:pt-4 sm:pb-3">
           <div className="flex items-baseline gap-1 select-none sm:order-1">
             <span className="font-serif text-2xl leading-none tracking-tight">brief</span>
             <span className="font-serif text-2xl leading-none text-muted-foreground italic">.</span>
@@ -560,7 +560,7 @@ export function Reader() {
         </header>
 
         {/* card stage */}
-        <main className="relative z-10 flex w-full max-w-3xl min-h-0 flex-1 flex-col px-2.5 sm:px-6">
+        <main className="relative z-10 flex w-full max-w-3xl lg:max-w-[60rem] min-h-0 flex-1 flex-col px-2.5 sm:px-6">
           {/* story segments */}
           <div className="mb-2.5 flex h-1 gap-1 px-1.5 sm:mb-3 sm:px-1">
             {issue
@@ -620,7 +620,7 @@ export function Reader() {
                     if (el) scrollRef.current = el
                   }}
                   onScroll={(e) => e.currentTarget === scrollRef.current && onScroll()}
-                  className="thin-scrollbar h-full overflow-y-auto overscroll-contain"
+                  className="no-scrollbar h-full overflow-y-auto overscroll-contain"
                 >
                   {isEnd && day ? (
                     <EndOfDay
@@ -671,7 +671,7 @@ export function Reader() {
         </main>
 
         {/* footer */}
-        <footer className="relative z-10 flex w-full max-w-3xl items-center justify-between gap-3 px-3.5 pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] sm:px-6 sm:pt-3 sm:pb-4">
+        <footer className="relative z-10 flex w-full max-w-3xl lg:max-w-[60rem] items-center justify-between gap-3 px-3.5 pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] sm:px-6 sm:pt-3 sm:pb-4">
           <Button
             variant="outline"
             size="icon-lg"
@@ -761,7 +761,7 @@ function StoryView({
   meta = { ...meta, subtitle: fillName(meta.subtitle, name) }
   const isIntro = index === 0
   return (
-    <div className="mx-auto max-w-[44rem] px-5 pt-5 pb-20 sm:px-10 sm:pt-9 sm:pb-16">
+    <div className="mx-auto max-w-[44rem] lg:max-w-[52rem] px-5 pt-5 pb-20 sm:px-10 sm:pt-9 sm:pb-16">
       <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground sm:mb-5 sm:text-xs">
         <span className="inline-flex items-center gap-1.5 font-medium text-foreground/80">
           <span className={cn("size-1.5 rounded-full", SOURCE_DOT[meta.source])} />
@@ -817,7 +817,7 @@ function StoryView({
 
 function LoadingView({ meta, name }: { meta: IssueMeta | null; name: string }) {
   return (
-    <div className="mx-auto max-w-[44rem] px-5 pt-6 sm:px-10 sm:pt-9">
+    <div className="mx-auto max-w-[44rem] lg:max-w-[52rem] px-5 pt-6 sm:px-10 sm:pt-9">
       <div className="mb-5 flex items-center gap-2">
         <Skeleton className="h-3 w-24" />
         <Skeleton className="h-3 w-14" />

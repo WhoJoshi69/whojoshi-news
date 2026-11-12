@@ -7,9 +7,27 @@ const robotoFlex = Roboto_Flex({ variable: "--font-roboto-flex", subsets: ["lati
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] })
 const anton = Anton({ variable: "--font-anton-face", subsets: ["latin"], weight: "400" })
 
+const title = "WhoJoshi — AI news, one card at a time"
+const description = "A fast, keyboard-first reader for WhoJoshi and The Code."
+
+// Icons (favicon.ico, icon.svg, apple-icon.png) and the share card (opengraph-image.tsx)
+// are picked up from this folder by file convention.
+// Share cards need absolute image URLs. Set NEXT_PUBLIC_SITE_URL for a custom domain;
+// on Vercel the production domain is used automatically.
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "http://localhost:3000")
+
 export const metadata: Metadata = {
-  title: "Brief — AI news, one card at a time",
-  description: "A fast, keyboard-first reader for WhoJoshi and The Code.",
+  metadataBase: new URL(siteUrl),
+  title,
+  description,
+  applicationName: "WhoJoshi",
+  appleWebApp: { title: "WhoJoshi" },
+  openGraph: { type: "website", siteName: "WhoJoshi", title, description },
+  twitter: { card: "summary_large_image", title, description },
 }
 
 export const viewport: Viewport = {
