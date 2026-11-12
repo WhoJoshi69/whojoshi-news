@@ -120,6 +120,8 @@ export function Reader() {
   // `end` = showing the "all caught up" card after the day's last story
   const [cur, setCur] = React.useState<{ key: string | null; story: number; end?: boolean }>({ key: null, story: 0 })
   const [calOpen, setCalOpen] = React.useState(false)
+  // "now" is read after mount — reading the clock during render breaks prerendering (cacheComponents)
+  const [now, setNow] = React.useState<Date | null>(null)
   const params = useParams<{ date?: string }>()
   const router = useRouter()
   const routeDay = params?.date ?? null
@@ -138,6 +140,7 @@ export function Reader() {
 
   /* ---- boot ---- */
   React.useEffect(() => {
+    setNow(new Date())
     setDark(document.documentElement.classList.contains("dark"))
     const saved = store.get("name")
     if (saved !== null) setName(saved)
@@ -507,7 +510,7 @@ export function Reader() {
                   selected={day ? parseDay(day) : undefined}
                   defaultMonth={day ? parseDay(day) : undefined}
                   onSelect={(d) => d && goDay(dayKey(d))}
-                  disabled={{ after: new Date() }}
+                  disabled={now ? { after: now } : undefined}
                   modifiers={{ hasIssues: daysWithIssues }}
                   modifiersClassNames={{ hasIssues: "has-issues" }}
                 />
