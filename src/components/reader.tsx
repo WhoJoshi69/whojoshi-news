@@ -31,7 +31,10 @@ type IssueMeta = {
 type Story = { kicker: string | null; title: string; html: string; image: string | null; sponsored: boolean }
 type Issue = IssueMeta & { stories: Story[] }
 
-type ListState = { issues: IssueMeta[]; page: number; done: boolean; loading: boolean }
+// damping ≈ 2·√(stiffness·mass) → critically damped: smooth settle, no overshoot (~450ms)
+const CARD_SPRING = { type: "spring", stiffness: 260, damping: 32, mass: 1 } as const
+
+type ListState ={ issues: IssueMeta[]; page: number; done: boolean; loading: boolean }
 type Loaded = Issue | "loading" | "error"
 
 const SOURCE_LABEL: Record<SourceId, string> = { superhuman: "WhoJoshi", code: "The Code" }
@@ -323,15 +326,19 @@ export function Reader() {
   /* ---- scroll progress ---- */
   const progress = useMotionValue(0)
   const smoothProgress = useSpring(progress, { stiffness: 300, damping: 40 })
+  // 0 at the top of a story → 1 after ~56px of scroll; drives the top edge blur
+  const topFade = useMotionValue(0)
   const onScroll = () => {
     const el = scrollRef.current
     if (!el) return
     const max = el.scrollHeight - el.clientHeight
     progress.set(max > 4 ? el.scrollTop / max : 1)
+    topFade.set(Math.min(el.scrollTop / 56, 1))
   }
   React.useEffect(() => {
     progress.jump(0)
     smoothProgress.jump(0)
+    topFade.jump(0)
     requestAnimationFrame(onScroll)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [curKey, storyIdx, !!issue])
@@ -589,24 +596,34 @@ export function Reader() {
               <motion.article
                 key={animKey}
                 custom={dir}
-                variants={
-                  touch
-                    ? // phones: no animated blur filter (expensive on top of WebGL + backdrop blur)
-                      {
-                        enter: (d: number) => ({ x: d * 90, opacity: 0, scale: 0.98 }),
-                        center: { x: 0, opacity: 1, scale: 1 },
-                        exit: (d: number) => ({ x: d * -90, opacity: 0, scale: 0.98 }),
-                      }
-                    : {
-                        enter: (d: number) => ({ x: d * 56, opacity: 0, scale: 0.97, filter: "blur(6px)" }),
-                        center: { x: 0, opacity: 1, scale: 1, filter: "blur(0px)" },
-                        exit: (d: number) => ({ x: d * -56, opacity: 0, scale: 0.97, filter: "blur(6px)" }),
-                      }
-                }
+                // Only transform + opacity are animated (GPU-composited). An animated filter blur
+                // on top of the card's backdrop blur and the WebGL aurora dropped frames.
+                // The outgoing card fades out quickly so the two cards never sit stacked;
+                // the incoming one glides in on a critically-damped spring (no bounce).
+                variants={{
+                  enter: (d: number) => ({ x: d * (touch ? 80 : 64), opacity: 0, scale: 0.985 }),
+                  center: {
+                    x: 0,
+                    opacity: 1,
+                    scale: 1,
+                    transition: {
+                      x: CARD_SPRING,
+                      scale: CARD_SPRING,
+                      opacity: { duration: 0.32, ease: "easeOut", delay: 0.06 },
+                    },
+                  },
+                  exit: (d: number) => ({
+                    x: d * -(touch ? 80 : 64),
+                    opacity: 0,
+                    scale: 0.985,
+                    transition: { duration: 0.2, ease: [0.4, 0, 1, 1] },
+                  }),
+                }}
                 initial="enter"
                 animate="center"
                 exit="exit"
-                transition={{ type: "spring", stiffness: 380, damping: 36, mass: 0.8 }}
+                transition={CARD_SPRING}
+                style={{ willChange: "transform, opacity" }}
                 drag="x"
                 dragDirectionLock
                 dragConstraints={{ left: 0, right: 0 }}
@@ -614,6 +631,27 @@ export function Reader() {
                 onDragEnd={onDragEnd}
                 className="absolute inset-0 flex flex-col overflow-hidden rounded-[26px] border border-foreground/10 bg-card/70 backdrop-blur-xl shadow-[0_1px_0_0_color-mix(in_oklch,var(--foreground)_4%,transparent),0_30px_80px_-40px_rgba(0,0,0,0.45)] sm:rounded-3xl sm:bg-card/60 sm:backdrop-blur-2xl"
               >
+                {/* top edge: content dissolves under a progressive blur once scrolled */}
+                <motion.div
+                  aria-hidden
+                  style={{ opacity: topFade }}
+                  className="pointer-events-none absolute inset-x-0 top-0 z-10 h-16 sm:h-20"
+                >
+                  {(touch ? [6] : [2, 5, 10]).map((px, i, all) => (
+                    <div
+                      key={px}
+                      className="absolute inset-0"
+                      style={{
+                        backdropFilter: `blur(${px}px)`,
+                        WebkitBackdropFilter: `blur(${px}px)`,
+                        // each stronger layer covers a shorter band from the top
+                        maskImage: `linear-gradient(to bottom, #000 ${((all.length - 1 - i) / all.length) * 40}%, transparent ${100 - (i / all.length) * 60}%)`,
+                        WebkitMaskImage: `linear-gradient(to bottom, #000 ${((all.length - 1 - i) / all.length) * 40}%, transparent ${100 - (i / all.length) * 60}%)`,
+                      }}
+                    />
+                  ))}
+                  <div className="absolute inset-0 bg-gradient-to-b from-card/80 via-card/30 to-transparent" />
+                </motion.div>
                 <div
                   ref={(el) => {
                     // during cross-fade the exiting card unmounts last — keep the newest one
