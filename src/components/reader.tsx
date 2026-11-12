@@ -122,6 +122,8 @@ export function Reader() {
   const [calOpen, setCalOpen] = React.useState(false)
   // "now" is read after mount — reading the clock during render breaks prerendering (cacheComponents)
   const [now, setNow] = React.useState<Date | null>(null)
+  const [touch, setTouch] = React.useState(false) // coarse pointer (phones/tablets)
+  const [swipeHint, setSwipeHint] = React.useState(false)
   const params = useParams<{ date?: string }>()
   const router = useRouter()
   const routeDay = params?.date ?? null
@@ -141,6 +143,9 @@ export function Reader() {
   /* ---- boot ---- */
   React.useEffect(() => {
     setNow(new Date())
+    const isTouch = window.matchMedia("(pointer: coarse)").matches
+    setTouch(isTouch)
+    if (isTouch && !store.get("swipeHintSeen")) setSwipeHint(true)
     setDark(document.documentElement.classList.contains("dark"))
     const saved = store.get("name")
     if (saved !== null) setName(saved)
@@ -437,10 +442,30 @@ export function Reader() {
 
   /* ---- swipe ---- */
   const onDragEnd = (_: unknown, info: PanInfo) => {
-    const swipe = info.offset.x + info.velocity.x * 0.2
-    if (swipe < -90) next()
-    else if (swipe > 90) prev()
+    // a short flick or a ~70px drag both count
+    const swipe = info.offset.x + info.velocity.x * 0.15
+    if (Math.abs(swipe) < 70) return
+    if (swipe < 0) next()
+    else prev()
+    navigator.vibrate?.(8) // tiny haptic tick on Android
+    dismissSwipeHint()
   }
+
+  const dismissSwipeHint = React.useCallback(() => {
+    setSwipeHint(false)
+    store.set("swipeHintSeen", "1")
+  }, [])
+
+  // the hint goes away on its own after a few seconds, or as soon as the reader moves
+  React.useEffect(() => {
+    if (!swipeHint) return
+    const id = setTimeout(dismissSwipeHint, 6000)
+    return () => clearTimeout(id)
+  }, [swipeHint, dismissSwipeHint])
+  React.useEffect(() => {
+    if (swipeHint && (storyIdx > 0 || issueIdx > 0)) dismissSwipeHint()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storyIdx, issueIdx])
 
   const total = issue?.stories.length ?? 0
   const emptyDay = dayCovered && feed.length === 0
@@ -462,23 +487,25 @@ export function Reader() {
             speed={1}
             glow={0.6}
             layers={2}
+            dpr={1} // it's a soft gradient — full-res buys nothing and costs battery on phones
           />
         </div>
 
         {/* header */}
-        <header className="relative z-10 flex w-full max-w-3xl items-center justify-between gap-3 px-4 pt-4 pb-3 sm:px-6">
-          <div className="flex items-baseline gap-1 select-none">
+        {/* phones: two rows (logo + actions, then a full-width filter). sm+: one row. */}
+        <header className="relative z-10 grid w-full max-w-3xl grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2.5 px-3.5 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2.5 sm:flex sm:justify-between sm:px-6 sm:pt-4 sm:pb-3">
+          <div className="flex items-baseline gap-1 select-none sm:order-1">
             <span className="font-serif text-2xl leading-none tracking-tight">brief</span>
             <span className="font-serif text-2xl leading-none text-muted-foreground italic">.</span>
           </div>
 
-          <nav className="flex items-center rounded-full border bg-card/60 p-1 backdrop-blur">
+          <nav className="col-span-2 flex items-center rounded-full border bg-card/60 p-1 backdrop-blur sm:order-2 sm:col-span-1">
             {FILTERS.map((f) => (
               <button
                 key={f.id}
                 onClick={() => changeFilter(f.id)}
                 className={cn(
-                  "relative rounded-full px-3 py-1 text-xs font-medium transition-colors sm:text-[0.8rem]",
+                  "relative flex-1 rounded-full px-3 py-1.5 text-[13px] font-medium transition-colors sm:flex-none sm:py-1 sm:text-[0.8rem]",
                   filter === f.id ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground",
                 )}
               >
@@ -494,15 +521,19 @@ export function Reader() {
             ))}
           </nav>
 
-          <div className="flex items-center gap-1">
+          <div className="row-start-1 flex items-center justify-self-end gap-0.5 sm:order-3 sm:gap-1">
             <Popover open={calOpen} onOpenChange={setCalOpen}>
               <PopoverTrigger
                 render={
-                  <Button variant="ghost" className="h-8 gap-1.5 rounded-full px-2.5" aria-label="Pick a date" />
+                  <Button
+                    variant="ghost"
+                    className="h-9 gap-1.5 rounded-full px-3 sm:h-8 sm:px-2.5"
+                    aria-label="Pick a date"
+                  />
                 }
               >
                 <CalendarDays />
-                <span className="hidden text-xs sm:inline">{day ? fmtDay(day) : "…"}</span>
+                <span className="text-xs">{day ? fmtDay(day) : "…"}</span>
               </PopoverTrigger>
               <PopoverContent align="end" className="w-auto p-0">
                 <Calendar
@@ -519,19 +550,19 @@ export function Reader() {
             <Button variant="ghost" size="icon" onClick={() => setHelp(true)} aria-label="Keyboard shortcuts" className="hidden sm:inline-flex">
               <Keyboard />
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => setAskName(true)} aria-label="Change your name" title={`Reading as ${displayName}`}>
+            <Button variant="ghost" size="icon" className="size-9 sm:size-8" onClick={() => setAskName(true)} aria-label="Change your name" title={`Reading as ${displayName}`}>
               <UserRound />
             </Button>
-            <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme">
+            <Button variant="ghost" size="icon" className="size-9 sm:size-8" onClick={toggleTheme} aria-label="Toggle theme">
               {dark ? <Sun /> : <Moon />}
             </Button>
           </div>
         </header>
 
         {/* card stage */}
-        <main className="relative z-10 flex w-full max-w-3xl min-h-0 flex-1 flex-col px-3 sm:px-6">
+        <main className="relative z-10 flex w-full max-w-3xl min-h-0 flex-1 flex-col px-2.5 sm:px-6">
           {/* story segments */}
-          <div className="mb-3 flex h-1 gap-1 px-1">
+          <div className="mb-2.5 flex h-1 gap-1 px-1.5 sm:mb-3 sm:px-1">
             {issue
               ? issue.stories.map((s, i) => (
                   <button
@@ -558,11 +589,20 @@ export function Reader() {
               <motion.article
                 key={animKey}
                 custom={dir}
-                variants={{
-                  enter: (d: number) => ({ x: d * 56, opacity: 0, scale: 0.97, filter: "blur(6px)" }),
-                  center: { x: 0, opacity: 1, scale: 1, filter: "blur(0px)" },
-                  exit: (d: number) => ({ x: d * -56, opacity: 0, scale: 0.97, filter: "blur(6px)" }),
-                }}
+                variants={
+                  touch
+                    ? // phones: no animated blur filter (expensive on top of WebGL + backdrop blur)
+                      {
+                        enter: (d: number) => ({ x: d * 90, opacity: 0, scale: 0.98 }),
+                        center: { x: 0, opacity: 1, scale: 1 },
+                        exit: (d: number) => ({ x: d * -90, opacity: 0, scale: 0.98 }),
+                      }
+                    : {
+                        enter: (d: number) => ({ x: d * 56, opacity: 0, scale: 0.97, filter: "blur(6px)" }),
+                        center: { x: 0, opacity: 1, scale: 1, filter: "blur(0px)" },
+                        exit: (d: number) => ({ x: d * -56, opacity: 0, scale: 0.97, filter: "blur(6px)" }),
+                      }
+                }
                 initial="enter"
                 animate="center"
                 exit="exit"
@@ -570,9 +610,9 @@ export function Reader() {
                 drag="x"
                 dragDirectionLock
                 dragConstraints={{ left: 0, right: 0 }}
-                dragElastic={0.18}
+                dragElastic={0.35}
                 onDragEnd={onDragEnd}
-                className="absolute inset-0 flex flex-col overflow-hidden rounded-3xl border border-foreground/10 bg-card/60 backdrop-blur-2xl shadow-[0_1px_0_0_color-mix(in_oklch,var(--foreground)_4%,transparent),0_30px_80px_-40px_rgba(0,0,0,0.45)]"
+                className="absolute inset-0 flex flex-col overflow-hidden rounded-[26px] border border-foreground/10 bg-card/70 backdrop-blur-xl shadow-[0_1px_0_0_color-mix(in_oklch,var(--foreground)_4%,transparent),0_30px_80px_-40px_rgba(0,0,0,0.45)] sm:rounded-3xl sm:bg-card/60 sm:backdrop-blur-2xl"
               >
                 <div
                   ref={(el) => {
@@ -602,41 +642,69 @@ export function Reader() {
                 </div>
               </motion.article>
             </AnimatePresence>
+
+            {/* one-time swipe hint on touch screens */}
+            <AnimatePresence>
+              {swipeHint && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 6 }}
+                  transition={{ delay: 0.4 }}
+                  className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center"
+                >
+                  <div className="flex items-center gap-2 rounded-full border bg-background/85 px-4 py-2 text-xs font-medium shadow-lg backdrop-blur">
+                    <motion.span
+                      animate={{ x: [0, -6, 0, 6, 0] }}
+                      transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+                      className="flex items-center"
+                    >
+                      <ChevronLeft className="size-3.5" />
+                      <ChevronRight className="size-3.5" />
+                    </motion.span>
+                    Swipe for the next story
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </main>
 
         {/* footer */}
-        <footer className="relative z-10 flex w-full max-w-3xl items-center justify-between gap-3 px-4 pt-3 pb-4 sm:px-6">
-          <Button variant="outline" size="icon-lg" className="rounded-full" onClick={prev} disabled={!hasPrev} aria-label="Previous">
-            <ChevronLeft />
+        <footer className="relative z-10 flex w-full max-w-3xl items-center justify-between gap-3 px-3.5 pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] sm:px-6 sm:pt-3 sm:pb-4">
+          <Button
+            variant="outline"
+            size="icon-lg"
+            className="size-11 rounded-full bg-card/60 backdrop-blur sm:size-9"
+            onClick={prev}
+            disabled={!hasPrev}
+            aria-label="Previous"
+          >
+            <ChevronLeft className="size-5 sm:size-4" />
           </Button>
 
           <div className="min-w-0 flex-1 text-center">
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
-                key={curKey ?? "none"}
+                key={`${curKey ?? "none"}:${isEnd}:${emptyDay}`}
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
                 transition={{ duration: 0.18 }}
-                className="truncate text-xs text-muted-foreground"
               >
-                {isEnd && day ? (
-                  <span>All caught up · {fmtDay(day)}</span>
-                ) : emptyDay && day ? (
-                  <span>No issues · {fmtDay(day)}</span>
-                ) : meta ? (
-                  <>
-                    <span>{day ? fmtDay(day) : ""}</span>
-                    <span className="mx-2 opacity-40">·</span>
-                    <span className="tabular-nums">
-                      {total ? `${storyIdx + 1} / ${total}` : "…"}
-                    </span>
-                    <span className="mx-2 opacity-40">·</span>
-                    <span>{fillName(meta.title, displayName)}</span>
-                  </>
-                ) : (
-                  "Loading issues…"
+                {/* line 1: where you are */}
+                <div className="truncate text-[11px] font-medium tracking-wider text-muted-foreground uppercase tabular-nums">
+                  {isEnd && day
+                    ? `All caught up · ${fmtDay(day)}`
+                    : emptyDay && day
+                      ? `No issues · ${fmtDay(day)}`
+                      : meta
+                        ? `${day ? fmtDay(day) + " · " : ""}${total ? `${storyIdx + 1} / ${total}` : "…"}`
+                        : "Loading…"}
+                </div>
+                {/* line 2: which issue */}
+                {meta && !isEnd && !emptyDay && (
+                  <div className="mt-0.5 truncate text-xs text-foreground/75">{fillName(meta.title, displayName)}</div>
                 )}
               </motion.div>
             </AnimatePresence>
@@ -648,8 +716,8 @@ export function Reader() {
             </div>
           </div>
 
-          <Button size="icon-lg" className="rounded-full" onClick={next} disabled={!hasNext} aria-label="Next">
-            <ChevronRight />
+          <Button size="icon-lg" className="size-11 rounded-full sm:size-9" onClick={next} disabled={!hasNext} aria-label="Next">
+            <ChevronRight className="size-5 sm:size-4" />
           </Button>
         </footer>
 
@@ -693,8 +761,8 @@ function StoryView({
   meta = { ...meta, subtitle: fillName(meta.subtitle, name) }
   const isIntro = index === 0
   return (
-    <div className="mx-auto max-w-[44rem] px-5 pt-6 pb-16 sm:px-10 sm:pt-9">
-      <div className="mb-5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+    <div className="mx-auto max-w-[44rem] px-5 pt-5 pb-20 sm:px-10 sm:pt-9 sm:pb-16">
+      <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground sm:mb-5 sm:text-xs">
         <span className="inline-flex items-center gap-1.5 font-medium text-foreground/80">
           <span className={cn("size-1.5 rounded-full", SOURCE_DOT[meta.source])} />
           {SOURCE_LABEL[meta.source]}
@@ -714,25 +782,25 @@ function StoryView({
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.05, type: "spring", stiffness: 300, damping: 30 }}
         className={cn(
-          "font-serif leading-[1.05] tracking-tight text-balance",
-          isIntro ? "text-[2.6rem] sm:text-6xl" : "text-[2.1rem] sm:text-5xl",
+          "font-serif leading-[1.04] tracking-tight text-balance hyphens-auto break-words",
+          isIntro ? "text-[2.35rem] sm:text-6xl" : "text-[1.9rem] sm:text-5xl",
         )}
       >
         {story.title}
       </motion.h1>
       {isIntro && meta.subtitle && (
-        <p className="mt-3 text-lg text-muted-foreground text-pretty">{meta.subtitle}</p>
+        <p className="mt-3 text-base text-muted-foreground text-pretty sm:text-lg">{meta.subtitle}</p>
       )}
 
       <motion.div
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1, type: "spring", stiffness: 260, damping: 30 }}
-        className="news-prose mt-7"
+        className="news-prose mt-5 sm:mt-7"
         dangerouslySetInnerHTML={{ __html: story.html }}
       />
 
-      <div className="mt-12 flex items-center justify-center text-xs text-muted-foreground/60">
+      <div className="mt-12 hidden items-center sm:flex justify-center text-xs text-muted-foreground/60">
         {index < total - 1 ? (
           <span className="flex items-center gap-1.5">
             Press <Kbd>Space</Kbd> or <Kbd>J</Kbd> for the next story
@@ -869,14 +937,14 @@ function NamePrompt({
 
   return (
     <motion.div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-md"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-background/70 backdrop-blur-md sm:items-center sm:p-4"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       onClick={() => canClose && onClose()}
     >
       <motion.form
-        initial={{ opacity: 0, y: 24, scale: 0.96 }}
+        initial={{ opacity: 0, y: 48, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 12, scale: 0.98 }}
         transition={{ type: "spring", stiffness: 380, damping: 32 }}
@@ -888,7 +956,7 @@ function NamePrompt({
           e.preventDefault()
           onSave(value)
         }}
-        className="w-full max-w-sm rounded-3xl border bg-card p-7 shadow-2xl"
+        className="w-full rounded-t-3xl border border-b-0 bg-card p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl sm:max-w-sm sm:rounded-3xl sm:border-b sm:p-7"
       >
         <h2 className="font-serif text-4xl leading-none tracking-wide uppercase">What’s your name?</h2>
         <p className="mt-3 text-sm text-muted-foreground">
@@ -978,7 +1046,7 @@ function EndOfDay({
         </Button>
       </motion.div>
       {olderDay && (
-        <p className="mt-5 flex items-center gap-1.5 text-xs text-muted-foreground/60">
+        <p className="mt-5 hidden items-center gap-1.5 text-xs text-muted-foreground/60 sm:flex">
           Press <Kbd>J</Kbd> or <Kbd>↵</Kbd> to continue
         </p>
       )}

@@ -304,3 +304,44 @@ body {
   opacity: 0.55;
   transform: translateX(-50%);
 }
+
+/* ---------- phones ---------- */
+
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+button,
+a {
+  touch-action: manipulation; /* no double-tap-zoom delay on taps */
+}
+
+@media (max-width: 639px) {
+  .news-prose {
+    font-size: 1rem;
+    line-height: 1.7;
+  }
+  .news-prose > * + * {
+    margin-top: 0.875rem;
+  }
+  .news-prose img {
+    margin: 1.25rem 0 0.4rem;
+    border-radius: 0.875rem;
+  }
+  .news-prose h3,
+  .news-prose h4,
+  .news-prose h6 {
+    margin-top: 1.75rem;
+    font-size: 1.4rem;
+  }
+  .news-prose ul,
+  .news-prose ol {
+    padding-left: 1.1rem;
+  }
+  /* wide tables scroll sideways instead of breaking the card */
+  .news-prose table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}

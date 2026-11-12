@@ -13,10 +13,10 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#0b0b0b" },
-  ],
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover", // draw under the notch / home indicator; safe-area insets are padded in the UI
+  themeColor: "#0b0b0b", // dark by default
 }
 
 // Dark by default; only a theme the user picked (stored by the toggle) overrides it.
